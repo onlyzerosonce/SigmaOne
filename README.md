@@ -18,6 +18,7 @@ A GUI-based general-purpose agent with features like checking for updates from G
 
 1.  **Prerequisites:**
     *   Python 3.7+
+    *   `pip` (Python package installer)
 
 2.  **Clone the repository (if you haven't already):**
     ```bash
@@ -25,12 +26,34 @@ A GUI-based general-purpose agent with features like checking for updates from G
     cd <repository-directory>
     ```
 
-3.  **Install required libraries:**
-    It's recommended to use a virtual environment.
+3.  **Install required libraries using the provided scripts:**
+
+    *   **For Windows:**
+        1.  Navigate to the repository directory in Command Prompt or PowerShell.
+        2.  Run the installer script:
+            ```bash
+            install.bat
+            ```
+        3.  Follow any on-screen prompts. The script will install `PyQt5`, `GitPython`, `transformers`, and `torch`.
+
+    *   **For Linux/macOS:**
+        1.  Open your terminal and navigate to the repository directory.
+        2.  Make the installer script executable (if it isn't already):
+            ```bash
+            chmod +x install.sh
+            ```
+        3.  Run the installer script:
+            ```bash
+            ./install.sh
+            ```
+        4.  The script will install `PyQt5`, `GitPython`, `transformers`, and `torch` using `pip3`.
+
+    It's still recommended to use a virtual environment before running the installer scripts if you prefer to keep dependencies isolated.
+    To do so:
     ```bash
     python -m venv venv
-    source venv/bin/activate  # On Windows use `venv\Scripts\activate`
-    pip install PyQt5 GitPython transformers torch
+    source venv/bin/activate  # On Windows use `venv\Scriptsctivate`
+    # Then run the appropriate install script.
     ```
 
 ## How to Run
