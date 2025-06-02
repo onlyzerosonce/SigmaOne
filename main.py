@@ -1,7 +1,8 @@
 import sys
 import os
 import shutil # For potentially removing a repo if cloning fails midway or for cleanup
-from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QTextEdit, QLineEdit, QMessageBox
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QTextEdit, QLineEdit, QMessageBox, QSystemTrayIcon, QMenu, QAction
+from PyQt5.QtGui import QIcon # For loading an icon from a file
 
 # Import git at the top, but handle ImportErrors gracefully in the methods using it.
 try:
@@ -20,11 +21,6 @@ except ImportError:
 class ChatApplication(QWidget):
     def __init__(self):
         super().__init__()
-        self.local_repo_path = "./app_repo"
-        self.ollama_available = False
-        self.ollama_model_name = "llama2" # Default model
-        self.initUI()
-        self.load_chatbot_model() # Attempt to load the model after UI is initialized
 
     def initUI(self):
         self.setWindowTitle("General Purpose Agent")
@@ -101,11 +97,6 @@ class ChatApplication(QWidget):
         if not self.ollama_available:
             self.log_message("Bot: Ollama is not available. Cannot process message.")
             return
-
-        if requests is None or json is None:
-            self.log_message("Bot: 'requests' or 'json' library not installed for Ollama. Cannot process message.")
-            return
-
         payload = {
             "model": self.ollama_model_name,
             "prompt": user_text,
@@ -151,8 +142,9 @@ class ChatApplication(QWidget):
         except Exception as e:
             self.log_message(f"Bot: Error processing Ollama response: {e}")
 
-    def check_for_updates(self):
-        self.log_message("Checking for updates...")
+    def check_for_updates(self, from_tray=False):
+        source_msg = "from tray" if from_tray else "from UI button"
+        self.log_message(f"Checking for updates ({source_msg})...")
 
         if git is None:
             self.log_message("Error: GitPython library is not installed. Update functionality disabled.")
@@ -161,80 +153,69 @@ class ChatApplication(QWidget):
 
         repo_url = "https://github.com/onlyzerosonce/SigmaOne"
 
-        # The following check is no longer needed as the URL is now hardcoded.
-        # if repo_url == "YOUR_GITHUB_REPO_URL_HERE":
-        #     self.log_message("Error: Repository URL is not configured.")
-        #     QMessageBox.warning(self, "Update Error", "The repository URL for updates is not configured.")
-        #     return
+        path_to_check_git = self.local_repo_path # Default path, e.g., "./app_repo"
+        # If self.local_repo_path does not exist or doesn't contain .git, try current directory "."
+        if not os.path.exists(os.path.join(path_to_check_git, ".git")):
+            self.log_message(f"'.git' not found in '{os.path.abspath(path_to_check_git)}'. Trying current directory '.'")
+            path_to_check_git = "."
 
         try:
-            repo = None
-            if os.path.exists(self.local_repo_path):
-                self.log_message(f"Local repository found at {self.local_repo_path}. Opening...")
-                try:
-                    repo = git.Repo(self.local_repo_path)
-                except git.InvalidGitRepositoryError:
-                    self.log_message(f"Invalid Git repository at {self.local_repo_path}. Removing and re-cloning.")
-                    if os.path.isdir(self.local_repo_path): # Check if it's a dir before rmtree
-                        shutil.rmtree(self.local_repo_path)
-                    repo = None
-
-            if repo is None:
-                self.log_message(f"Cloning repository from {repo_url} into {self.local_repo_path}...")
-                try:
-                    repo = git.Repo.clone_from(repo_url, self.local_repo_path)
-                    self.log_message("Repository cloned successfully.")
-                except git.GitCommandError as e:
-                    self.log_message(f"Git clone error: {e}")
-                    QMessageBox.critical(self, "Update Error", f"Failed to clone repository: {e}")
-                    return
-
-            self.log_message("Fetching latest changes from remote (origin)...")
-            try:
-                origin = repo.remotes.origin
-                origin.fetch()
-            except git.GitCommandError as e:
-                self.log_message(f"Git fetch error: {e}")
-                QMessageBox.critical(self, "Update Error", f"Failed to fetch updates: {e}")
+            if not os.path.exists(os.path.join(path_to_check_git, ".git")):
+                self.log_message(f"Cannot check for updates: '.git' folder not found in '{os.path.abspath(self.local_repo_path)}' or in current directory '{os.path.abspath('.')}'.")
+                QMessageBox.information(self, "Update Check", f"Cannot check for updates (not a Git repository).\nPlease visit {repo_url} for the latest version.")
                 return
 
+            self.log_message(f"Using Git repository at '{os.path.abspath(path_to_check_git)}'")
+            repo = git.Repo(path_to_check_git)
+
+            # Handle detached HEAD state (e.g., after a direct checkout of a commit)
+            if repo.head.is_detached:
+                self.log_message("Warning: Git HEAD is detached. Cannot reliably check for updates against a branch.")
+                QMessageBox.warning(self, "Update Check", "Your local repository is in a 'detached HEAD' state. Cannot automatically check for updates. Please manually check the repository for new versions.")
+                return
+
+            self.log_message("Fetching latest changes from remote (origin)...")
+            origin = repo.remotes.origin
+            origin.fetch()
+
             local_commit = repo.head.commit
-            remote_commit_ref = None
-            try:
-                remote_commit_ref = repo.remotes.origin.refs['main']
-            except IndexError:
-                try:
-                    remote_commit_ref = repo.remotes.origin.refs['master']
-                except IndexError:
-                    self.log_message("Error: Could not find 'main' or 'master' branch on remote.")
-                    QMessageBox.critical(self, "Update Error", "Could not determine the default branch (main/master) on the remote repository.")
-                    return
 
-            remote_commit = remote_commit_ref.commit
+            # Determine remote reference (main or master)
+            remote_ref_name = None
+            if 'main' in repo.remotes.origin.refs:
+                remote_ref_name = 'main'
+            elif 'master' in repo.remotes.origin.refs:
+                remote_ref_name = 'master'
+            else:
+                self.log_message("Error: Could not find 'main' or 'master' branch on remote 'origin'.")
+                QMessageBox.critical(self, "Update Error", "Could not determine the default branch (main/master) on the remote repository.")
+                return
 
-            self.log_message(f"Local commit: {local_commit.hexsha}")
-            self.log_message(f"Remote commit: {remote_commit.hexsha}")
+            remote_commit = repo.remotes.origin.refs[remote_ref_name].commit
+
+            self.log_message(f"Local commit: {local_commit.hexsha} ({repo.active_branch.name})")
+            self.log_message(f"Remote commit: {remote_commit.hexsha} (origin/{remote_ref_name})")
 
             if local_commit != remote_commit:
-                self.log_message("Update available. Pulling changes...")
-                try:
-                    origin.pull()
-                    self.log_message("Update downloaded successfully.")
-                    QMessageBox.information(self, "Update Complete", "Application updated. Please restart the application.")
-                    self.log_message("Simulating application restart by quitting...")
-                    QApplication.instance().quit()
-                except git.GitCommandError as e:
-                    self.log_message(f"Git pull error: {e}")
-                    QMessageBox.critical(self, "Update Error", f"Failed to pull updates: {e}")
+                self.log_message("Update available.")
+                QMessageBox.information(self, "Update Available",
+                                        f"A new version is available on branch '{remote_ref_name}' at {repo_url}\n"
+                                        "Please consider updating your local repository or downloading the latest version.")
             else:
                 self.log_message("Application is up to date.")
-                QMessageBox.information(self, "No Updates", "Your application is currently up to date.")
+                QMessageBox.information(self, "No Updates", f"Your application (branch '{repo.active_branch.name}') is currently up to date with 'origin/{remote_ref_name}'.")
 
+        except git.InvalidGitRepositoryError:
+            self.log_message(f"Error: The path '{os.path.abspath(path_to_check_git)}' is not a valid Git repository.")
+            QMessageBox.warning(self, "Update Error", f"The application could not find a valid Git repository at the expected location: {os.path.abspath(path_to_check_git)}")
+        except git.NoSuchPathError:
+             self.log_message(f"Error: The path '{os.path.abspath(path_to_check_git)}' does not exist for Git operations.")
+             QMessageBox.warning(self, "Update Error", f"The application path for Git operations does not exist: {os.path.abspath(path_to_check_git)}")
         except git.GitCommandError as e:
             self.log_message(f"A Git command failed: {e}")
             QMessageBox.critical(self, "Update Error", f"An error occurred during Git operation: {e}")
         except Exception as e:
-            self.log_message(f"An unexpected error occurred during update: {e}")
+            self.log_message(f"An unexpected error occurred during update check: {e}")
             QMessageBox.critical(self, "Update Error", f"An unexpected error occurred: {e}")
 
 
