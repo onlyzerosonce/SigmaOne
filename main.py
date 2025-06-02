@@ -9,21 +9,20 @@ try:
 except ImportError:
     git = None # Placeholder if gitpython is not installed
 
-# Attempt to import transformers and torch
+# Attempt to import requests and json for Ollama integration
 try:
-    from transformers import AutoModelForCausalLM, AutoTokenizer
-    import torch
+    import requests
+    import json
 except ImportError:
-    AutoModelForCausalLM = None
-    AutoTokenizer = None
-    torch = None
+    requests = None
+    json = None
 
 class ChatApplication(QWidget):
     def __init__(self):
         super().__init__()
         self.local_repo_path = "./app_repo"
-        self.tokenizer = None
-        self.model = None
+        self.ollama_available = False
+        self.ollama_model_name = "llama2" # Default model
         self.initUI()
         self.load_chatbot_model() # Attempt to load the model after UI is initialized
 
@@ -56,24 +55,40 @@ class ChatApplication(QWidget):
         QApplication.processEvents() # Ensure UI updates
 
     def load_chatbot_model(self):
-        if AutoModelForCausalLM is None or AutoTokenizer is None or torch is None:
-            self.log_message("Bot: Transformers or PyTorch library not installed. Chatbot functionality disabled.")
+        if requests is None or json is None:
+            self.log_message("Bot: 'requests' or 'json' library not installed. Ollama functionality disabled.")
+            self.ollama_available = False
             return
 
-        model_name = "distilgpt2" # Using a smaller model
-        self.log_message(f"Bot: Attempting to load model '{model_name}'...")
+        self.log_message("Bot: Checking Ollama connection and model availability...")
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-            self.model = AutoModelForCausalLM.from_pretrained(model_name)
-            self.log_message(f"Bot: Model '{model_name}' loaded successfully.")
-        except OSError as e: # Often indicates network issues or model not found
-            self.log_message(f"Bot: Error loading model '{model_name}' (Network/OS Error): {e}. Chatbot functionality may be unavailable.")
-            self.tokenizer = None
-            self.model = None
-        except Exception as e: # Catch any other exceptions during model loading
-            self.log_message(f"Bot: Failed to load chatbot model '{model_name}': {e}. Chatbot functionality disabled.")
-            self.tokenizer = None
-            self.model = None
+            response = requests.get("http://localhost:11434/api/tags")
+            response.raise_for_status() # Raise an exception for HTTP errors
+            models_data = response.json()
+
+            available_models = [model_info["name"] for model_info in models_data.get("models", [])]
+
+            # Check if self.ollama_model_name (or a version of it like self.ollama_model_name:latest) is available
+            model_found = any(self.ollama_model_name in model_name for model_name in available_models)
+
+            if model_found:
+                self.ollama_available = True
+                self.log_message(f"Bot: Ollama connected. Model '{self.ollama_model_name}' is available.")
+            else:
+                self.ollama_available = False
+                self.log_message(f"Bot: Ollama connected, but model '{self.ollama_model_name}' not found. Available models: {', '.join(available_models) if available_models else 'None'}.")
+        except requests.exceptions.ConnectionError:
+            self.log_message("Bot: Ollama service not found. Please ensure Ollama is running at http://localhost:11434.")
+            self.ollama_available = False
+        except requests.exceptions.RequestException as e:
+            self.log_message(f"Bot: Error connecting to Ollama or listing models: {e}")
+            self.ollama_available = False
+        except json.JSONDecodeError:
+            self.log_message("Bot: Error decoding response from Ollama /api/tags. Is it running correctly?")
+            self.ollama_available = False
+        except Exception as e: # Catch any other unexpected errors
+            self.log_message(f"Bot: An unexpected error occurred while checking Ollama: {e}")
+            self.ollama_available = False
 
     def handle_user_input(self):
         user_text = self.user_input.text().strip()
@@ -83,33 +98,58 @@ class ChatApplication(QWidget):
         self.log_message(f"You: {user_text}")
         self.user_input.clear()
 
-        if self.model and self.tokenizer:
-            try:
-                # Encode the input text
-                inputs = self.tokenizer.encode(user_text + self.tokenizer.eos_token, return_tensors='pt')
+        if not self.ollama_available:
+            self.log_message("Bot: Ollama is not available. Cannot process message.")
+            return
 
-                # Generate a response
-                # Ensure attention_mask is passed if the model expects it, especially for padding
-                attention_mask = torch.ones(inputs.shape, dtype=torch.long, device=inputs.device)
+        if requests is None or json is None:
+            self.log_message("Bot: 'requests' or 'json' library not installed for Ollama. Cannot process message.")
+            return
 
-                outputs = self.model.generate(
-                    inputs,
-                    attention_mask=attention_mask,
-                    max_length=50,
-                    pad_token_id=self.tokenizer.eos_token_id,
-                    no_repeat_ngram_size=2, # Prevent repetitive phrases
-                    num_beams=3, # Use beam search for potentially better quality
-                    early_stopping=True
-                )
+        payload = {
+            "model": self.ollama_model_name,
+            "prompt": user_text,
+            "stream": False
+        }
+        self.log_message("Bot: Sending message to Ollama...")
+        try:
+            response = requests.post("http://localhost:11434/api/generate", json=payload, timeout=60) # Added timeout
+            response.raise_for_status() # Raise HTTPError for bad responses (4xx or 5xx)
 
-                # Decode the response, skipping special tokens and the input part
-                response_text = self.tokenizer.decode(outputs[:, inputs.shape[-1]:][0], skip_special_tokens=True)
-                self.log_message(f"Bot: {response_text}")
-            except Exception as e:
-                self.log_message(f"Bot: Error during response generation: {e}")
-        else:
-            self.log_message("Bot: Chatbot model not available.")
+            # Process potentially newline-delimited JSON responses from Ollama
+            final_response_json = None
+            for line in response.iter_lines():
+                if line: # filter out keep-alive new lines
+                    try:
+                        json_line = json.loads(line)
+                        final_response_json = json_line # Keep overwriting to get the last complete JSON object
+                    except json.JSONDecodeError:
+                        self.log_message(f"Bot: Warning - Could not decode a line from Ollama stream: {line}")
+                        continue # Skip malformed lines
 
+            if final_response_json and "response" in final_response_json:
+                bot_response = final_response_json["response"]
+                self.log_message(f"Bot: {bot_response.strip()}")
+            elif final_response_json and "error" in final_response_json:
+                self.log_message(f"Bot: Ollama error: {final_response_json['error']}")
+            elif not final_response_json:
+                 self.log_message("Bot: No valid JSON response received from Ollama.")
+            else:
+                self.log_message("Bot: Received an unexpected response format from Ollama.")
+
+        except requests.exceptions.Timeout:
+            self.log_message("Bot: Request to Ollama timed out. The model might be taking too long to respond.")
+        except requests.exceptions.ConnectionError:
+            self.log_message("Bot: Connection error while sending message to Ollama. Is it still running?")
+            self.ollama_available = False # Potentially set to false if connection fails
+        except requests.exceptions.HTTPError as e:
+             self.log_message(f"Bot: HTTP error from Ollama API - Status {e.response.status_code}: {e.response.text}")
+        except requests.exceptions.RequestException as e:
+            self.log_message(f"Bot: Error sending request to Ollama: {e}")
+        except json.JSONDecodeError: # Should be caught by line-by-line decoding, but as a fallback
+            self.log_message("Bot: Error decoding the final Ollama response.")
+        except Exception as e:
+            self.log_message(f"Bot: Error processing Ollama response: {e}")
 
     def check_for_updates(self):
         self.log_message("Checking for updates...")
