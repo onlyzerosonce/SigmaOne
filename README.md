@@ -15,19 +15,9 @@ A GUI-based general-purpose agent with features like checking for updates from G
 
 ## Prerequisites
 
-1.  **Python 3.7+:** Download from [https://www.python.org/](https://www.python.org/) and ensure it's added to your system's PATH.
-2.  **Git:** Required for the application to update itself. Download from [https://git-scm.com/](https://git-scm.com/).
-3.  **Ollama:** The chatbot functionality relies on Ollama.
-    *   Install Ollama from [https://ollama.com/](https://ollama.com/).
-    *   Ensure Ollama is running and you have pulled a model (e.g., `ollama pull llama2`).
 
 ## How to Run
 
-1.  **Clone the repository (if you haven't already):**
-    ```bash
-    git clone https://github.com/onlyzerosonce/SigmaOne # Or your fork's URL
-    cd SigmaOne
-    ```
     *(Note: The start scripts can also perform the initial clone if run in an empty directory intended for the agent, but cloning first is clearer.)*
 
 2.  **Run the startup script:**
