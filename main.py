@@ -21,86 +21,6 @@ except ImportError:
 class ChatApplication(QWidget):
     def __init__(self):
         super().__init__()
-        self.local_repo_path = "./app_repo" # Path for git operations
-        self.ollama_available = False
-        self.ollama_model_name = "llama2" # Default Ollama model
-        self.app_icon_path = "icon.png" # Path to the application icon
-
-        self.initUI() # Standard UI setup
-        self.initTrayIcon() # Setup for the system tray icon
-
-        self.load_chatbot_model() # Load chatbot model (Ollama check)
-
-        # Flag to determine if quit is from tray or window close event
-        self._is_quitting_via_tray = False
-
-    def initTrayIcon(self):
-        self.tray_icon = QSystemTrayIcon(self)
-
-        icon = QIcon(self.app_icon_path)
-        if icon.isNull():
-            self.log_message(f"System Tray: Icon not found at '{self.app_icon_path}', using default.")
-        self.tray_icon.setIcon(icon)
-
-        tray_menu = QMenu()
-
-        show_hide_action = QAction("Show/Hide Window", self)
-        show_hide_action.triggered.connect(self.show_hide_window)
-        tray_menu.addAction(show_hide_action)
-
-        check_updates_action = QAction("Check for Updates (Tray)", self)
-        check_updates_action.triggered.connect(self.tray_check_for_updates)
-        tray_menu.addAction(check_updates_action)
-
-        tray_menu.addSeparator()
-
-        quit_action = QAction("Quit", self)
-        quit_action.triggered.connect(self.tray_quit_application)
-        tray_menu.addAction(quit_action)
-
-        self.tray_icon.setContextMenu(tray_menu)
-        self.tray_icon.show()
-        self.tray_icon.activated.connect(self.handle_tray_activation)
-
-    def handle_tray_activation(self, reason):
-        # Show/hide window on left click (QSystemTrayIcon.Trigger)
-        if reason == QSystemTrayIcon.Trigger:
-            self.show_hide_window()
-
-    def show_hide_window(self):
-        if self.isVisible():
-            self.hide()
-        else:
-            self.showNormal()
-            self.activateWindow() # Bring to front
-
-    def tray_check_for_updates(self):
-        # This method now calls the refactored check_for_updates.
-        self.log_message("System Tray: Initiating update check.")
-        self.check_for_updates(from_tray=True)
-
-    def tray_quit_application(self):
-        self.log_message("System Tray: Quit action triggered.")
-        self._is_quitting_via_tray = True
-        self.tray_icon.hide() # Hide tray icon immediately
-        QApplication.instance().quit() # Quit the application
-
-    # Override closeEvent to hide to tray instead of quitting
-    def closeEvent(self, event):
-        if self._is_quitting_via_tray:
-            self.log_message("Application: Quitting via tray action.")
-            event.accept() # Allow quit
-        else:
-            self.log_message("Application: Close event intercepted, hiding to tray.")
-            event.ignore() # Intercept close event
-            self.hide()    # Hide window to tray
-            if self.tray_icon.isVisible(): # Show message only if tray icon is actually visible
-                self.tray_icon.showMessage(
-                    "General Purpose Agent",
-                    "Application minimized to system tray.",
-                    QSystemTrayIcon.Information,
-                    2000 # Duration in ms
-                )
 
     def initUI(self):
         self.setWindowTitle("General Purpose Agent")
@@ -177,11 +97,6 @@ class ChatApplication(QWidget):
         if not self.ollama_available:
             self.log_message("Bot: Ollama is not available. Cannot process message.")
             return
-
-        if requests is None or json is None:
-            self.log_message("Bot: 'requests' or 'json' library not installed for Ollama. Cannot process message.")
-            return
-
         payload = {
             "model": self.ollama_model_name,
             "prompt": user_text,
